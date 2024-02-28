@@ -26,7 +26,12 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+struct MyData{
+	uint8_t x;
+	uint8_t y;
+	uint8_t z;
+	float A;
+};
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -39,6 +44,10 @@
 #define EEPROM_SIZE		512
 #define PAGE_SIZE		16
 #define EEPROM_ADDRESS	0xA0
+
+#define U32_ADDR		14
+#define FL_ADDR			(U32_ADDR + sizeof(uint32_t))
+#define MD_ADDR			0x100
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -47,7 +56,7 @@ I2C_HandleTypeDef hi2c2;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
+eeprom_t Eeprom;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,6 +77,69 @@ int __io_putchar(int ch){
 	return ch;
 }
 
+/** EEPROM Functions for Library **/
+eeprom_e EE_Write(uint32_t i2cAddress, uint32_t memAddress, uint8_t memAddrSize, uint8_t *data, uint32_t len){
+	HAL_StatusTypeDef Error;
+
+	if (memAddress >= 256){
+		i2cAddress |= 0x2;
+		memAddress -= 256;
+	}
+	Error = HAL_I2C_Mem_Write(&hi2c2, i2cAddress, memAddress, memAddrSize, data, len, 100);
+	if (Error != HAL_OK){
+		return EE_ERROR;
+	}
+
+	return EE_OK;
+}
+
+eeprom_e EE_Read(uint32_t i2cAddress, uint32_t memAddress, uint8_t memAddrSize, uint8_t *data, uint32_t len){
+	HAL_StatusTypeDef Error;
+
+	if (memAddress >= 256){
+		i2cAddress |= 0x2;
+		memAddress -= 256;
+	}
+	Error = HAL_I2C_Mem_Read(&hi2c2, i2cAddress, memAddress, memAddrSize, data, len, 100);
+	if (Error != HAL_OK){
+		return EE_ERROR;
+	}
+
+	return EE_OK;
+}
+
+/** Test Functions **/
+void u32Task(uint32_t *v){
+	*v += 1;
+}
+
+void flTask(float *v){
+	*v += 0.10;
+}
+
+void MDTask(struct MyData *v){
+	v->x += 1;
+	v->y -= 1;
+	v->z = 2*v->x;
+
+	v->A = (float)((v->x*1.5 + v->y*0.5)*v->z);
+}
+
+void PrintAll(){
+	uint32_t u32V;
+	float flV;
+	struct MyData mdV;
+
+	eeprom_read(&Eeprom, U32_ADDR, (uint8_t*)&u32V, sizeof(u32V));
+	eeprom_read(&Eeprom, FL_ADDR, (uint8_t*)&flV, sizeof(flV));
+	eeprom_read(&Eeprom, MD_ADDR, (uint8_t*)&mdV, sizeof(struct MyData));
+
+	printf("Valor u32V (Addr 0x%04X) %lu\n", U32_ADDR, u32V);
+	printf("Valor flV (Addr 0x%04X) %.3f\n", FL_ADDR, flV);
+
+	printf("Valor mdV (Addr 0x%04X) x=%d y=%d z=%d A=%.3f\n\n",
+			MD_ADDR, mdV.x, mdV.y, mdV.z, mdV.A);
+}
 
 /* USER CODE END 0 */
 
@@ -78,7 +150,11 @@ int __io_putchar(int ch){
 int main(void)
 {
   /* USER CODE BEGIN 1 */
+	uint32_t u32Value;
+	float flValue;
+	struct MyData MDValue;
 
+	uint32_t bm0, bm1, bm2, bm3;
 
   /* USER CODE END 1 */
 
@@ -103,14 +179,54 @@ int main(void)
   MX_I2C2_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  Eeprom.i2cAddress = EEPROM_ADDRESS;
+  Eeprom.pageSize = PAGE_SIZE;
+  Eeprom.memSize = EEPROM_SIZE;
+  Eeprom.memAddrSize = 1;
 
+  Eeprom.DelayMs = HAL_Delay;
+  Eeprom.EeReadFxn = EE_Read;
+  Eeprom.EeWriteFxn = EE_Write;
 
+  if (eeprom_init(&Eeprom) !=  EE_OK){
+	  Error_Handler();
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  u32Value = 0;
+  flValue = 0.0;
+  MDValue.x = 0;
+  MDValue.y = 0;
+  MDValue.z = 0;
+  MDValue.A = 0.0;
   while (1)
   {
+	  u32Task(&u32Value);
+	  flTask(&flValue);
+	  MDTask(&MDValue);
+
+	  bm0 = HAL_GetTick();
+	  eeprom_write(&Eeprom, U32_ADDR, (uint8_t*)&u32Value, sizeof(u32Value));
+	  bm1 = HAL_GetTick() - bm0;
+
+	  bm0 = HAL_GetTick();
+	  eeprom_write(&Eeprom, FL_ADDR, (uint8_t*)&flValue, sizeof(flValue));
+	  bm2 = HAL_GetTick() - bm0;
+
+	  bm0 = HAL_GetTick();
+	  eeprom_write(&Eeprom, MD_ADDR, (uint8_t*)&MDValue, sizeof(struct MyData));
+	  bm3 = HAL_GetTick() - bm0;
+
+	  printf(" > Write Process: \n"
+			  "BM1 %lu ms\n"
+			  "BM2 %lu ms\n"
+			  "BM3 %lu ms\n",
+			  bm1, bm2, bm3);
+
+	  PrintAll();
+
 	  HAL_Delay(1000);
     /* USER CODE END WHILE */
 
